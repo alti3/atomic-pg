@@ -2,9 +2,9 @@
 -- Atomic (PostgreSQL) Indexes
 -- ============================================================
 
--- TransLog fetch by TransID + cover read columns
-CREATE INDEX IF NOT EXISTS ix_translog_transid
-ON translog (transid)
+-- TransactionLog fetch by TransID + cover read columns
+CREATE INDEX IF NOT EXISTS ix_transaction_log_transid
+ON transaction_log (transid)
 INCLUDE (fromid, toid, amount, serviceid, transtype, isexecuted);
 
 -- Accounts fetch by AccountID + cover read columns
@@ -23,10 +23,10 @@ ON fees (serviceid, servicetranstypeid, fromsubscriptiontypeid, tosubscriptionty
 INCLUDE (feeid, feesaccount, sequenceid, applyinglimit, exemptionlimit,
          fromfixedfees, frompercentfees, tofixedfees, topercentfees);
 
--- ChangeBalanceLog query by TransID
-CREATE INDEX IF NOT EXISTS ix_changebalancelog_transid
-ON changebalancelog (transid);
+-- BalanceChangeLog query by TransID
+CREATE INDEX IF NOT EXISTS ix_balance_change_log_transid
+ON balance_change_log (transid);
 
--- TransExecutionLog query by TransID
-CREATE INDEX IF NOT EXISTS ix_transexecutionlog_transid
-ON transexecutionlog (transid);
+-- TransactionExecutionLog query by TransID
+CREATE INDEX IF NOT EXISTS ix_transaction_execution_log_transid
+ON transaction_execution_log (transid);

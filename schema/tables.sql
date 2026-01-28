@@ -38,9 +38,9 @@ CREATE TABLE IF NOT EXISTS services (
 );
 
 -- -----------------------
--- ServicesTransTypes (updated to match README + procs)
+-- ServiceTransactionTypes (updated to match README + procs)
 -- -----------------------
-CREATE TABLE IF NOT EXISTS servicestranstypes (
+CREATE TABLE IF NOT EXISTS service_transaction_types (
     servicetranstypeid BIGSERIAL PRIMARY KEY,
     typeid             SMALLINT NOT NULL,
     serviceid          SMALLINT NOT NULL,
@@ -54,22 +54,22 @@ CREATE TABLE IF NOT EXISTS servicestranstypes (
     maxamount           NUMERIC(18,4),
 
     -- Optional uniqueness (recommended)
-    CONSTRAINT uq_servicestranstypes UNIQUE (typeid, serviceid)
+    CONSTRAINT uq_service_transaction_types UNIQUE (typeid, serviceid)
 );
 
 -- -----------------------
--- ServiceCurrencies
+-- Service Currencies
 -- -----------------------
-CREATE TABLE IF NOT EXISTS servicecurrencies (
+CREATE TABLE IF NOT EXISTS service_currencies (
     serviceid  SMALLINT NOT NULL,
     currencyid SMALLINT NOT NULL,
     PRIMARY KEY (serviceid, currencyid)
 );
 
 -- -----------------------
--- ServiceSubscriptionTypes
+-- Service Subscription Types
 -- -----------------------
-CREATE TABLE IF NOT EXISTS servicesubscriptiontypes (
+CREATE TABLE IF NOT EXISTS service_subscription_types (
     serviceid           SMALLINT NOT NULL,
     subscriptiontypeid  SMALLINT NOT NULL,
     subscriptionname    VARCHAR(50),
@@ -83,9 +83,9 @@ CREATE TABLE IF NOT EXISTS servicesubscriptiontypes (
 );
 
 -- -----------------------
--- SubscriptionPlans
+-- Subscription Plans
 -- -----------------------
-CREATE TABLE IF NOT EXISTS subscriptionplans (
+CREATE TABLE IF NOT EXISTS subscription_plans (
     planid             SMALLINT PRIMARY KEY,
     serviceid          SMALLINT,
     subscriptiontypeid SMALLINT,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS subscriptionplans (
 -- Fees (added feeid because procs reference FeeID)
 -- -----------------------
 CREATE TABLE IF NOT EXISTS fees (
-    feeid                 BIGSERIAL PRIMARY KEY, -- <-- missing in SQL Server tables.sql, but used in ExecuteTransaction logging
+    feeid                 BIGSERIAL PRIMARY KEY, -- <-- missing in SQL Server tables.sql, but used in execute_transaction logging
     serviceid             SMALLINT NOT NULL,
     servicetranstypeid    SMALLINT NOT NULL,
     fromsubscriptiontypeid SMALLINT NOT NULL,
@@ -127,9 +127,9 @@ CREATE TABLE IF NOT EXISTS fees (
 );
 
 -- -----------------------
--- TransLog
+-- TransactionLog
 -- -----------------------
-CREATE TABLE IF NOT EXISTS translog (
+CREATE TABLE IF NOT EXISTS transaction_log (
     transid         BIGSERIAL PRIMARY KEY,
     transdate       TIMESTAMPTZ DEFAULT timezone('utc', now()),
     fromid          BIGINT,
@@ -152,9 +152,9 @@ CREATE TABLE IF NOT EXISTS translog (
 );
 
 -- -----------------------
--- ChangeBalanceLog (missing in SQL Server tables.sql, required by ExecuteTransaction)
+-- BalanceChangeLog (missing in SQL Server tables.sql, required by execute_transaction)
 -- -----------------------
-CREATE TABLE IF NOT EXISTS changebalancelog (
+CREATE TABLE IF NOT EXISTS balance_change_log (
     logid          BIGSERIAL PRIMARY KEY,
     transid        BIGINT NOT NULL,
     accountid      BIGINT NOT NULL,
@@ -167,9 +167,9 @@ CREATE TABLE IF NOT EXISTS changebalancelog (
 );
 
 -- -----------------------
--- TransExecutionLog (updated to match procs inserts)
+-- TransactionExecutionLog (updated to match procs inserts)
 -- -----------------------
-CREATE TABLE IF NOT EXISTS transexecutionlog (
+CREATE TABLE IF NOT EXISTS transaction_execution_log (
     executionid   BIGSERIAL PRIMARY KEY,
     transid       BIGINT NOT NULL,
     executiondate TIMESTAMPTZ NOT NULL,

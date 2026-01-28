@@ -18,14 +18,14 @@ Atomic is a high-integrity financial transaction engine that runs **entirely ins
   - strict processing order via `SequenceID`
   - optional fee-collection accounts
 - **Two-phase Reserved Transactions**:
-  - `CreateTransaction` optionally reserves balance (amount + sender fees)
-  - `ExecuteTransaction` finalizes the transfer and releases reservation
+  - `create_transaction` optionally reserves balance (amount + sender fees)
+  - `execute_transaction` finalizes the transfer and releases reservation
 - **Optimistic Concurrency Control**:
   - `LastUpdate` + balance checks during updates
   - detects concurrent modification and aborts safely
 - **Comprehensive Logging**:
-  - `ChangeBalanceLog` for an ordered balance change timeline
-  - `TransExecutionLog` for success/failure and error details
+  - `balance_change_log` for an ordered balance change timeline
+  - `transaction_execution_log` for success/failure and error details
 
 ---
 
@@ -33,11 +33,11 @@ Atomic is a high-integrity financial transaction engine that runs **entirely ins
 
 ```
 Atomic/
-├── database/
-│   ├── tables.sql          # PostgreSQL schema (tables, constraints)
-│   ├── indexes.sql         # PostgreSQL indexes
+├── schema/
+│   ├── tables.sql             # PostgreSQL schema (tables, constraints)
+│   ├── indexes.sql            # PostgreSQL indexes
 ├── stored_procedures/
-│   ├── create_transaction.sql # Creates a transaction record and optionally reserves funds.
+│   ├── create_transaction.sql  # Creates a transaction record and optionally reserves funds.
 │   └── execute_transaction.sql # Executes a pending transaction, applies fees, moves balances, and logs.
 ```
 
@@ -70,20 +70,20 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 Run:
 
 ```bash
-psql -d atomic -f database/tables_pg.sql
+psql -d atomic -f schema/tables.sql
 ```
 
 ### 4) Create indexes
 
 ```bash
-psql -d atomic -f database/indexes_pg.sql
+psql -d atomic -f schema/indexes.sql
 ```
 
 ### 5) Create functions (stored procedures)
 
 ```bash
-psql -d atomic -f stored_procedures/create_transaction_pg.sql
-psql -d atomic -f stored_procedures/execute_transaction_pg.sql
+psql -d atomic -f stored_procedures/create_transaction.sql
+psql -d atomic -f stored_procedures/execute_transaction.sql
 ```
 
 ---
@@ -93,19 +93,19 @@ psql -d atomic -f stored_procedures/execute_transaction_pg.sql
 1. **accounts**
 
    * stores balance and reserved balance, limits, status, currency, service, expiration, etc.
-2. **translog**
+2. **transaction_log**
 
    * records all transactions (created + executed state)
 3. **fees**
 
    * defines fee rules per service + transaction type + subscription types
-4. **changebalancelog**
+4. **balance_change_log**
 
    * ordered balance-change audit entries (main transfer + fee debits/credits)
-5. **transexecutionlog**
+5. **transaction_execution_log**
 
    * records each execution attempt (success/failure + message + error code)
-6. **servicestranstypes**
+6. **service_transaction_types**
 
    * defines per-service transaction types:
 
@@ -121,14 +121,14 @@ Atomic supports two transaction flows:
 ### 1) Immediate Transactions
 
 * No reservation
-* `CreateTransaction` only records the transaction after validation
-* `ExecuteTransaction` moves balances and logs everything
+* `create_transaction` only records the transaction after validation
+* `execute_transaction` moves balances and logs everything
 
 ### 2) Reserved Transactions (Two-Phase)
 
 * Reservation required
-* `CreateTransaction` reserves `(Amount + SenderFees)` into `accounts.reservedbalance`
-* `ExecuteTransaction` verifies reserved balance, releases it, then applies final balances and logs
+* `create_transaction` reserves `(Amount + SenderFees)` into `accounts.reservedbalance`
+* `execute_transaction` verifies reserved balance, releases it, then applies final balances and logs
 
 ---
 
@@ -136,20 +136,20 @@ Atomic supports two transaction flows:
 
 PostgreSQL uses functions instead of SQL Server procedures. Atomic provides:
 
-### 1) `createtransaction(...) -> translog`
+### 1) `create_transaction(...) -> transaction_log`
 
 Creates a transaction record and optionally reserves funds.
 
 **Signature**
 
 ```sql
-createtransaction(
+create_transaction(
   p_fromid BIGINT,
   p_toid BIGINT,
   p_amount NUMERIC(18,4),
   p_transtype SMALLINT,
   p_serviceid SMALLINT
-) RETURNS translog
+) RETURNS transaction_log
 ```
 
 **What it does**
@@ -163,19 +163,19 @@ createtransaction(
 
   * checks available balance and minlimit
   * updates `reservedbalance` with optimistic concurrency
-* inserts into `translog`
-* returns the inserted `translog` row
+* inserts into `transaction_log`
+* returns the inserted `transaction_log` row
 
 ---
 
-### 2) `executetransaction(transid) -> text`
+### 2) `execute_transaction(transid) -> text`
 
 Executes a pending transaction, applies fees, moves balances, and logs.
 
 **Signature**
 
 ```sql
-executetransaction(p_transid BIGINT) RETURNS TEXT
+execute_transaction(p_transid BIGINT) RETURNS TEXT
 ```
 
 **What it does**
@@ -190,10 +190,10 @@ executetransaction(p_transid BIGINT) RETURNS TEXT
 
   * verifies reserved balance covers `(amount + sender fees)`
   * reduces reserved balance
-* writes ordered entries into `changebalancelog`
+* writes ordered entries into `balance_change_log`
 * updates sender + receiver balances with optimistic concurrency
-* marks `translog.isexecuted=true` and closes the transaction
-* writes a success entry into `transexecutionlog`
+* marks `transaction_log.isexecuted=true` and closes the transaction
+* writes a success entry into `transaction_execution_log`
 * returns `'success'`
 
 ---
@@ -206,7 +206,7 @@ Because PostgreSQL is strict about types, you should **cast** arguments to match
 
 ```sql
 SELECT *
-FROM createtransaction(
+FROM create_transaction(
   1001::bigint,
   2002::bigint,
   50.0000::numeric(18,4),
@@ -218,17 +218,17 @@ FROM createtransaction(
 If you prefer not to cast every time, add an overload wrapper:
 
 ```sql
-CREATE OR REPLACE FUNCTION createtransaction(
+CREATE OR REPLACE FUNCTION create_transaction(
   p_fromid integer,
   p_toid integer,
   p_amount numeric,
   p_transtype integer,
   p_serviceid integer
 )
-RETURNS translog
+RETURNS transaction_log
 LANGUAGE sql
 AS $$
-  SELECT * FROM createtransaction(
+  SELECT * FROM create_transaction(
     p_fromid::bigint,
     p_toid::bigint,
     p_amount::numeric(18,4),
@@ -241,7 +241,7 @@ $$;
 ### Executing a transaction
 
 ```sql
-SELECT executetransaction(12345::bigint);
+SELECT execute_transaction(12345::bigint);
 ```
 
 ---
@@ -255,11 +255,11 @@ Atomic preserves your existing error codes by raising messages like:
 50014: Transaction will make sender's balance outside allowed limits...
 ```
 
-`executetransaction()` also attempts to parse the leading 5-digit code and stores it in:
+`execute_transaction()` also attempts to parse the leading 5-digit code and stores it in:
 
-* `transexecutionlog.errornumber`
+* `transaction_execution_log.errornumber`
 
-### CreateTransaction Error Codes
+### create_transaction Error Codes
 
 | Error Code | Meaning                                                                    |
 | ---------- | -------------------------------------------------------------------------- |
@@ -279,7 +279,7 @@ Atomic preserves your existing error codes by raising messages like:
 | 50113      | Amount below minimum allowed for this transaction type                     |
 | 50114      | Amount exceeds maximum allowed for this transaction type                   |
 
-### ExecuteTransaction Error Codes
+### execute_transaction Error Codes
 
 | Error Code | Meaning                                                          |
 | ---------- | ---------------------------------------------------------------- |
@@ -321,19 +321,19 @@ This prevents double-spend and maintains balance correctness.
 During conversion from SQL Server, the following schema gaps were fixed to match the logic:
 
 * `accounts.reservedbalance` was added (required by reservation flow)
-* `servicestranstypes` gained:
+* `service_transaction_types` gained:
 
   * `requiresreservation`
   * `minamount`, `maxamount`
   * unique constraint `(typeid, serviceid)`
 * `fees` gained a surrogate `feeid` (needed for detailed fee logging)
-* `changebalancelog` and enhanced `transexecutionlog` were added to support the stored logic
+* `balance_change_log` and enhanced `transaction_execution_log` were added to support the stored logic
 
 ---
 
 ## Performance Notes
 
-* Use the included indexes (`database/indexes_pg.sql`)
+* Use the included indexes (`schema/indexes.sql`)
 * Keep `accounts` and `fees` well indexed for high TPS (Transactions Per Second)
 * Consider running with:
 

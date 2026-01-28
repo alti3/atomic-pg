@@ -1,5 +1,5 @@
 -- Demo seed data for Atomic (PostgreSQL)
--- Inserts: services, servicestranstypes, accounts, fees
+-- Inserts: services, service_transaction_types, accounts, fees
 
 BEGIN;
 
@@ -11,7 +11,7 @@ SET servicename = EXCLUDED.servicename,
     description = EXCLUDED.description;
 
 -- Service transaction types
-INSERT INTO servicestranstypes (
+INSERT INTO service_transaction_types (
     typeid,
     serviceid,
     caption,

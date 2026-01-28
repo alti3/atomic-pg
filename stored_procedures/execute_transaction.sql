@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION executetransaction(p_transid BIGINT)
+CREATE OR REPLACE FUNCTION execute_transaction(p_transid BIGINT)
 RETURNS TEXT
 LANGUAGE plpgsql
 AS $$
@@ -117,8 +117,8 @@ BEGIN
         v_transtype,
         v_transisexecuted,
         v_requiresreservation
-    FROM translog tl
-    JOIN servicestranstypes stt
+    FROM transaction_log tl
+    JOIN service_transaction_types stt
       ON stt.typeid = tl.transtype
      AND stt.serviceid = tl.serviceid
     WHERE tl.transid = p_transid;
@@ -429,7 +429,7 @@ BEGIN
     ) x;
 
     -- Persist ordered logs
-    INSERT INTO changebalancelog (
+    INSERT INTO balance_change_log (
         transid, accountid, amount, executedate, executionguid,
         balancebefore, balanceafter, note
     )
@@ -478,7 +478,7 @@ BEGIN
         RAISE EXCEPTION '50017: The receiver''s account was changed during execution';
     END IF;
 
-    UPDATE translog
+    UPDATE transaction_log
     SET
         isexecuted = TRUE,
         executiondate = v_utcnow,
@@ -488,7 +488,7 @@ BEGIN
     WHERE transid = p_transid;
 
     -- 4) Success log
-    INSERT INTO transexecutionlog (transid, executiondate, issuccessful, message, errornumber, errorstate, serviceid)
+    INSERT INTO transaction_execution_log (transid, executiondate, issuccessful, message, errornumber, errorstate, serviceid)
     VALUES (p_transid, v_utcnow, TRUE, 'Transaction Executed Successfully', NULL, NULL, v_transserviceid);
 
     RETURN 'success';
@@ -503,7 +503,7 @@ EXCEPTION
             v_errnum := substring(v_errmsg from '^[0-9]{5}')::int;
         END IF;
 
-        INSERT INTO transexecutionlog (transid, executiondate, issuccessful, message, errornumber, errorstate, serviceid)
+        INSERT INTO transaction_execution_log (transid, executiondate, issuccessful, message, errornumber, errorstate, serviceid)
         VALUES (COALESCE(p_transid, 0), timezone('utc', now()), FALSE, v_errmsg, v_errnum, NULL, v_transserviceid);
 
         RAISE;

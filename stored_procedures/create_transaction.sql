@@ -1,11 +1,11 @@
-CREATE OR REPLACE FUNCTION createtransaction(
+CREATE OR REPLACE FUNCTION create_transaction(
     p_fromid   BIGINT,
     p_toid     BIGINT,
     p_amount   NUMERIC(18,4),
     p_transtype SMALLINT,
     p_serviceid SMALLINT
 )
-RETURNS translog
+RETURNS transaction_log
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -31,7 +31,7 @@ DECLARE
     v_availablebalance     NUMERIC(18,4);
     v_requiredamount       NUMERIC(18,4);
 
-    v_row translog;
+    v_row transaction_log;
     v_utcnow TIMESTAMPTZ := timezone('utc', now());
     v_rowcount INT;
 BEGIN
@@ -43,7 +43,7 @@ BEGIN
     -- 2) Transaction type validation
     SELECT stt.requiresreservation, stt.minamount, stt.maxamount
     INTO v_requiresreservation, v_minallowedamount, v_maxallowedamount
-    FROM servicestranstypes stt
+    FROM service_transaction_types stt
     WHERE stt.typeid = p_transtype
       AND stt.serviceid = p_serviceid;
 
@@ -173,7 +173,7 @@ BEGIN
     END IF;
 
     -- 8) Create transaction record
-    INSERT INTO translog (
+    INSERT INTO transaction_log (
         fromid, toid, amount, serviceid, transtype,
         isexecuted, transdate
     )
