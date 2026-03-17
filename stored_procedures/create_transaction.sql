@@ -9,7 +9,12 @@ RETURNS transaction_log
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    v_transtypefound      BOOLEAN := FALSE;
     v_requiresreservation BOOLEAN;
+
+    v_senderfound         BOOLEAN := FALSE;
+    v_receiverfound       BOOLEAN := FALSE;
+
     v_fromsubscriptiontype SMALLINT;
     v_tosubscriptiontype   SMALLINT;
     v_fromserviceid        SMALLINT;
@@ -20,11 +25,11 @@ DECLARE
     v_tocurrencyid         SMALLINT;
     v_fromexpirationdate   TIMESTAMPTZ;
     v_toexpirationdate     TIMESTAMPTZ;
+
     v_fromfees             NUMERIC(18,4) := 0;
     v_currentbalance       NUMERIC(18,4);
     v_reservedbalance      NUMERIC(18,4);
     v_minlimit             NUMERIC(18,4);
-    v_maxlimit             NUMERIC(18,4);
     v_minallowedamount     NUMERIC(18,4);
     v_maxallowedamount     NUMERIC(18,4);
 
@@ -40,14 +45,106 @@ BEGIN
         RAISE EXCEPTION '50100: Amount must be greater than zero';
     END IF;
 
-    -- 2) Transaction type validation
-    SELECT stt.requiresreservation, stt.minamount, stt.maxamount
-    INTO v_requiresreservation, v_minallowedamount, v_maxallowedamount
-    FROM service_transaction_types stt
-    WHERE stt.typeid = p_transtype
-      AND stt.serviceid = p_serviceid;
+    -- 2) Read-only validation phase
+    WITH transaction_type AS (
+        SELECT
+            stt.requiresreservation,
+            stt.minamount,
+            stt.maxamount
+        FROM service_transaction_types stt
+        WHERE stt.typeid = p_transtype
+          AND stt.serviceid = p_serviceid
+    ),
+    sender AS (
+        SELECT
+            a.accountid,
+            a.subscriptiontype,
+            a.balance,
+            a.reservedbalance,
+            a.expirationdate,
+            a.serviceid,
+            a.minlimit,
+            a.status,
+            a.currencyid
+        FROM accounts a
+        WHERE a.accountid = p_fromid
+    ),
+    receiver AS (
+        SELECT
+            a.accountid,
+            a.subscriptiontype,
+            a.serviceid,
+            a.status,
+            a.currencyid,
+            a.expirationdate
+        FROM accounts a
+        WHERE a.accountid = p_toid
+    ),
+    fee_total AS (
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN p_amount >= f.applyinglimit AND p_amount <= f.exemptionlimit
+                THEN COALESCE(f.fromfixedfees, 0) + (COALESCE(f.frompercentfees, 0) * p_amount / 100)
+                ELSE 0
+            END
+        ), 0) AS fromfees
+        FROM fees f
+        CROSS JOIN sender s
+        CROSS JOIN receiver r
+        WHERE f.serviceid = p_serviceid
+          AND f.servicetranstypeid = p_transtype
+          AND f.fromsubscriptiontypeid = s.subscriptiontype
+          AND f.tosubscriptiontypeid = r.subscriptiontype
+    )
+    SELECT
+        COALESCE(tt.requiresreservation IS NOT NULL, FALSE),
+        tt.requiresreservation,
+        tt.minamount,
+        tt.maxamount,
+        COALESCE(s.accountid IS NOT NULL, FALSE),
+        s.subscriptiontype,
+        s.balance,
+        s.reservedbalance,
+        s.expirationdate,
+        s.serviceid,
+        s.minlimit,
+        s.status,
+        s.currencyid,
+        COALESCE(r.accountid IS NOT NULL, FALSE),
+        r.subscriptiontype,
+        r.serviceid,
+        r.status,
+        r.currencyid,
+        r.expirationdate,
+        COALESCE(ft.fromfees, 0)
+    INTO
+        v_transtypefound,
+        v_requiresreservation,
+        v_minallowedamount,
+        v_maxallowedamount,
+        v_senderfound,
+        v_fromsubscriptiontype,
+        v_currentbalance,
+        v_reservedbalance,
+        v_fromexpirationdate,
+        v_fromserviceid,
+        v_minlimit,
+        v_fromstatus,
+        v_fromcurrencyid,
+        v_receiverfound,
+        v_tosubscriptiontype,
+        v_toserviceid,
+        v_tostatus,
+        v_tocurrencyid,
+        v_toexpirationdate,
+        v_fromfees
+    FROM (SELECT 1 AS anchor) seed
+    LEFT JOIN transaction_type tt ON TRUE
+    LEFT JOIN sender s ON TRUE
+    LEFT JOIN receiver r ON TRUE
+    LEFT JOIN fee_total ft ON TRUE;
 
-    IF NOT FOUND THEN
+    IF NOT v_transtypefound THEN
         RAISE EXCEPTION '50101: Transaction type does not exist';
     END IF;
 
@@ -59,31 +156,7 @@ BEGIN
         RAISE EXCEPTION '50114: Amount exceeds maximum allowed for this transaction type';
     END IF;
 
-    -- 3) Sender account
-    SELECT
-        subscriptiontype,
-        balance,
-        reservedbalance,
-        expirationdate,
-        serviceid,
-        minlimit,
-        maxlimit,
-        status,
-        currencyid
-    INTO
-        v_fromsubscriptiontype,
-        v_currentbalance,
-        v_reservedbalance,
-        v_fromexpirationdate,
-        v_fromserviceid,
-        v_minlimit,
-        v_maxlimit,
-        v_fromstatus,
-        v_fromcurrencyid
-    FROM accounts
-    WHERE accountid = p_fromid;
-
-    IF NOT FOUND THEN
+    IF NOT v_senderfound THEN
         RAISE EXCEPTION '50102: Sender account does not exist';
     END IF;
 
@@ -95,23 +168,7 @@ BEGIN
         RAISE EXCEPTION '50104: Sender account is expired';
     END IF;
 
-    -- 4) Receiver account
-    SELECT
-        subscriptiontype,
-        serviceid,
-        status,
-        currencyid,
-        expirationdate
-    INTO
-        v_tosubscriptiontype,
-        v_toserviceid,
-        v_tostatus,
-        v_tocurrencyid,
-        v_toexpirationdate
-    FROM accounts
-    WHERE accountid = p_toid;
-
-    IF NOT FOUND THEN
+    IF NOT v_receiverfound THEN
         RAISE EXCEPTION '50105: Receiver account does not exist';
     END IF;
 
@@ -123,7 +180,6 @@ BEGIN
         RAISE EXCEPTION '50107: Receiver account is expired';
     END IF;
 
-    -- 5) Service & currency match
     IF v_fromserviceid <> p_serviceid OR v_toserviceid <> p_serviceid THEN
         RAISE EXCEPTION '50108: Service ID mismatch between accounts and transaction';
     END IF;
@@ -132,22 +188,7 @@ BEGIN
         RAISE EXCEPTION '50109: Currency mismatch between accounts';
     END IF;
 
-    -- 6) Fee calculation (sender only)
-    SELECT COALESCE(SUM(
-        CASE
-            WHEN p_amount >= f.applyinglimit AND p_amount <= f.exemptionlimit
-            THEN COALESCE(f.fromfixedfees,0) + (COALESCE(f.frompercentfees,0) * p_amount / 100)
-            ELSE 0
-        END
-    ), 0)
-    INTO v_fromfees
-    FROM fees f
-    WHERE f.serviceid = p_serviceid
-      AND f.servicetranstypeid = p_transtype
-      AND f.fromsubscriptiontypeid = v_fromsubscriptiontype
-      AND f.tosubscriptiontypeid = v_tosubscriptiontype;
-
-    -- 7) Balance validation / reservation
+    -- 3) Write phase: reserve only after all validation passes.
     IF v_requiresreservation THEN
         v_availablebalance := v_currentbalance - v_reservedbalance;
         v_requiredamount   := p_amount + v_fromfees;
@@ -156,13 +197,17 @@ BEGIN
             RAISE EXCEPTION '50110: Insufficient available balance for reservation (considering minimum limit)';
         END IF;
 
-        UPDATE accounts
-        SET reservedbalance = reservedbalance + v_requiredamount
-        WHERE accountid = p_fromid
-          AND balance = v_currentbalance
-          AND reservedbalance = v_reservedbalance;
+        WITH reservation AS (
+            UPDATE accounts
+            SET reservedbalance = reservedbalance + v_requiredamount
+            WHERE accountid = p_fromid
+              AND balance = v_currentbalance
+              AND reservedbalance = v_reservedbalance
+            RETURNING 1
+        )
+        SELECT COUNT(*) INTO v_rowcount
+        FROM reservation;
 
-        GET DIAGNOSTICS v_rowcount = ROW_COUNT;
         IF v_rowcount = 0 THEN
             RAISE EXCEPTION '50111: Account balance changed during reservation';
         END IF;
@@ -172,16 +217,19 @@ BEGIN
         END IF;
     END IF;
 
-    -- 8) Create transaction record
-    INSERT INTO transaction_log (
-        fromid, toid, amount, serviceid, transtype,
-        isexecuted, transdate
+    WITH new_transaction AS (
+        INSERT INTO transaction_log (
+            fromid, toid, amount, serviceid, transtype,
+            isexecuted, transdate
+        )
+        VALUES (
+            p_fromid, p_toid, p_amount, p_serviceid, p_transtype,
+            FALSE, v_utcnow
+        )
+        RETURNING *
     )
-    VALUES (
-        p_fromid, p_toid, p_amount, p_serviceid, p_transtype,
-        FALSE, v_utcnow
-    )
-    RETURNING * INTO v_row;
+    SELECT * INTO v_row
+    FROM new_transaction;
 
     RETURN v_row;
 EXCEPTION
